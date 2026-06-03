@@ -8,13 +8,12 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 
 import { useMarketPairs } from '../../src/api/hooks';
 import { PairRow } from '../../src/components/markets/PairRow';
 import { FilterBar, FilterCategory } from '../../src/components/markets/FilterBar';
 import { PairRowSkeleton } from '../../src/components/common/Skeleton';
-import { useTradePanelStore, useFavoritesStore } from '../../src/store';
+import { useFavoritesStore } from '../../src/store';
 import { MarketPair } from '../../src/types';
 import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../../src/theme';
 
@@ -56,8 +55,6 @@ const scoreMarket = (market: SearchableMarket, query: string) => {
 
 export default function MarketsScreen() {
   const { top } = useSafeAreaInsets();
-  const router = useRouter();
-  const { openTradeModal } = useTradePanelStore();
   const { favorites } = useFavoritesStore();
 
   const [search, setSearch] = useState('');
@@ -125,11 +122,10 @@ export default function MarketsScreen() {
   }, [searchablePairs, filter, normalizedQuery, favorites]);
 
   const handlePairPress = useCallback(
-    (pair: MarketPair) => {
-      openTradeModal(pair);
-      router.push('/trade');
+    (_pair: MarketPair) => {
+      // Trading is temporarily disabled; keep rows visible without opening Trade.
     },
-    [router, openTradeModal]
+    []
   );
 
   const renderItem = useCallback(

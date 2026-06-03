@@ -19,8 +19,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, TYPOGRAPHY } from '../../src/theme';
 import { useHaptics } from '../../src/hooks/useHaptics';
 
-const TAB_COUNT = 4;
-
 const Icons = {
   markets: (active: boolean) => (
     <View style={styles.iconWrap}>
@@ -69,7 +67,8 @@ const Icons = {
 
 const TABS = [
   { name: 'index', label: 'Markets', icon: Icons.markets },
-  { name: 'trade', label: 'Trade', icon: Icons.trade },
+  // Trading is temporarily hidden from the app shell.
+  // { name: 'trade', label: 'Trade', icon: Icons.trade },
   { name: 'portfolio', label: 'Portfolio', icon: Icons.portfolio },
   { name: 'settings', label: 'Settings', icon: Icons.settings },
 ];
@@ -78,18 +77,27 @@ function CustomTabBar({ state, navigation }: any) {
   const { onTap } = useHaptics();
   const { width } = useWindowDimensions();
   const { bottom } = useSafeAreaInsets();
+  const visibleTabs = TABS.map((tab) => ({
+    ...tab,
+    route: state.routes.find((route: any) => route.name === tab.name),
+  })).filter((tab) => tab.route);
+  const activeRouteKey = state.routes[state.index]?.key;
+  const activeIndex = Math.max(
+    0,
+    visibleTabs.findIndex((tab) => tab.route.key === activeRouteKey)
+  );
   const tabBarWidth = Math.min(width - 36, 430);
-  const tabWidth = tabBarWidth / TAB_COUNT;
+  const tabWidth = tabBarWidth / visibleTabs.length;
   const tabBottom = Math.max(bottom + 14, 26);
   const tabHeight = Platform.OS === 'ios' ? 64 : 58;
-  const indicatorX = useSharedValue(state.index * tabWidth);
+  const indicatorX = useSharedValue(activeIndex * tabWidth);
 
   React.useEffect(() => {
-    indicatorX.value = withSpring(state.index * tabWidth, {
+    indicatorX.value = withSpring(activeIndex * tabWidth, {
       damping: 20,
       stiffness: 300,
     });
-  }, [state.index, indicatorX, tabWidth]);
+  }, [activeIndex, indicatorX, tabWidth]);
 
   const indicatorStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: indicatorX.value }],
@@ -111,15 +119,14 @@ function CustomTabBar({ state, navigation }: any) {
       <View style={styles.borderTop} />
       <Animated.View style={[styles.indicator, { width: tabWidth }, indicatorStyle]} />
 
-      {TABS.map((tab, index) => {
+      {visibleTabs.map((tab) => {
         return (
           <TabButton
             key={tab.name}
             tab={tab}
-            index={index}
-            isFocused={state.index === index}
-            routeKey={state.routes[index].key}
-            routeName={state.routes[index].name}
+            isFocused={tab.route.key === activeRouteKey}
+            routeKey={tab.route.key}
+            routeName={tab.route.name}
             navigation={navigation}
             onTap={onTap}
           />
@@ -177,7 +184,8 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen name="index" />
-      <Tabs.Screen name="trade" />
+      {/* Trading is temporarily hidden from tabs. */}
+      <Tabs.Screen name="trade" options={{ href: null }} />
       <Tabs.Screen name="portfolio" />
       <Tabs.Screen name="settings" />
     </Tabs>
