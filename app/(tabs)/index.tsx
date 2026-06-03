@@ -146,7 +146,7 @@ export default function MarketsScreen() {
           <Text style={styles.heading}>Markets</Text>
           {counts.total > 0 && (
             <Text style={styles.subheading}>
-              <Text style={{ color: COLORS.text.primary }}>{counts.total} xStocks</Text>
+              <Text style={{ color: COLORS.text.primary }}>{counts.total} markets</Text>
               <Text style={{ color: COLORS.text.muted }}>
                 {' '}· {counts.stocks} stocks{showEtfs ? ` · ${counts.etfs} ETFs` : ''}
               </Text>

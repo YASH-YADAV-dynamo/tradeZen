@@ -1,15 +1,12 @@
 # TradeZen
 
-## Start
+TradeZen is a mobile-first market app for browsing tokenized stocks, building a watchlist, and previewing trades from a clean React Native interface.
 
-1. Install dependencies:
+## Start
 
 ```bash
 npm install
-```
-
-2. Start the app:
-
-```bash
 npm run start
 ```
+
+Scan the QR code with Expo Go.

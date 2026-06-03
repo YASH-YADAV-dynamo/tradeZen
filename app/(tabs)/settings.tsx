@@ -39,7 +39,7 @@ export default function SettingsScreen() {
           onChangeText={(value) => setAddress(value.trim() ? value.trim() : null)}
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="Wallet address or registered wallet ID"
+          placeholder="0x... wallet address"
           placeholderTextColor={COLORS.text.muted}
           style={styles.input}
         />

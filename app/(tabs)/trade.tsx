@@ -14,14 +14,13 @@ import {
   useCreateXChangeQuote,
   useMarketPairs,
   useXChangeAsset,
-  useXChangeQuoteStatus,
 } from '../../src/api/hooks';
 import { GlassCard } from '../../src/components/common/GlassCard';
 import { useToast } from '../../src/components/common/Toast';
 import { useHaptics } from '../../src/hooks/useHaptics';
 import { useTradePanelStore, useWalletStore } from '../../src/store';
 import { COLORS, RADIUS, SPACING, TYPOGRAPHY } from '../../src/theme';
-import { MarketPair, XChangeQuote, XChangeSide } from '../../src/types';
+import { MarketPair, XChangeSide } from '../../src/types';
 import { formatPrice, formatUSD } from '../../src/utils/format';
 import { isFormValid, validateTradeForm } from '../../src/utils/validation';
 
@@ -31,15 +30,12 @@ const pickPair = (pairs: MarketPair[] | undefined, selected?: MarketPair) =>
 const centsToUSD = (value?: number | null) =>
   typeof value === 'number' ? formatUSD(value / 100) : '--';
 
-const shortAddress = (value?: string | null) =>
-  value && value.length > 14 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value ?? '--';
-
 const getApiMessage = (error: unknown) => {
   if (axios.isAxiosError(error)) {
     const message = (error.response?.data as any)?.message;
     return typeof message === 'string' ? message : error.message;
   }
-  return 'Unable to create xChange quote';
+  return 'Unable to prepare order';
 };
 
 export default function TradeScreen() {
@@ -54,15 +50,12 @@ export default function TradeScreen() {
 
   const [side, setSide] = useState<XChangeSide>('Buy');
   const [cashAmount, setCashAmount] = useState('');
-  const [quote, setQuote] = useState<XChangeQuote | undefined>();
 
   const identifier = pair?.base;
   const quoteAmount = Number.parseFloat(cashAmount);
   const availabilityQuery = useXChangeAsset(identifier, apiKey);
   const availability = availabilityQuery.data;
   const quoteMutation = useCreateXChangeQuote(apiKey);
-  const quoteStatusQuery = useXChangeQuoteStatus(quote?.id, apiKey);
-  const activeQuote = quoteStatusQuery.data ?? quote;
 
   const enabledNetworks = useMemo(
     () => availability?.networks.filter((network) => network.isEnabled) ?? [],
@@ -102,7 +95,7 @@ export default function TradeScreen() {
       return;
     }
     if (!apiKey.trim()) {
-      toast.error('Missing EXPO_PUBLIC_XSTOCKS_API_KEY');
+      toast.error('Trading is not available right now');
       onError();
       return;
     }
@@ -117,7 +110,7 @@ export default function TradeScreen() {
       return;
     }
     if (!canQuote) {
-      toast.error('Order is outside xChange availability or limits');
+      toast.error('Order is outside the available limits');
       onError();
       return;
     }
@@ -131,8 +124,9 @@ export default function TradeScreen() {
         paymentWalletIdentifier: address.trim(),
         receivingWalletIdentifier: address.trim(),
       });
-      setQuote(nextQuote);
-      toast.success('Firm xChange quote created');
+      toast.success(
+        `Order prepared at ${typeof nextQuote.price === 'number' ? `$${formatPrice(nextQuote.price)}` : 'market price'}`
+      );
       onSuccess();
     } catch (error) {
       toast.error(getApiMessage(error));
@@ -146,9 +140,9 @@ export default function TradeScreen() {
       contentContainerStyle={styles.content}
     >
       <View style={styles.header}>
-        <Text style={styles.title}>xChange Trade</Text>
+        <Text style={styles.title}>Trade</Text>
         <Text style={styles.subtitle}>
-          {pair ? `${pair.name} · ${identifier}` : 'Loading xStocks'}
+          {pair ? `${pair.name} · ${identifier}` : 'Loading markets'}
         </Text>
       </View>
 
@@ -162,21 +156,21 @@ export default function TradeScreen() {
           </View>
           <View style={styles.networkPill}>
             <Text style={styles.networkText}>
-              {availability?.canQuote ? 'RFQ ready' : 'Checking'}
+              {availability?.canQuote ? 'Available' : 'Checking'}
             </Text>
           </View>
         </View>
       </GlassCard>
 
       <GlassCard padding={14} style={styles.card}>
-        <Text style={styles.cardTitle}>Execution Setup</Text>
-        <Text style={styles.label}>Wallet address or registered wallet ID</Text>
+        <Text style={styles.cardTitle}>Wallet</Text>
+        <Text style={styles.label}>Wallet address</Text>
         <TextInput
           value={address ?? ''}
           onChangeText={(value) => setAddress(value.trim() ? value.trim() : null)}
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="0x... or registered wallet identifier"
+          placeholder="0x... wallet address"
           placeholderTextColor={COLORS.text.muted}
           style={styles.input}
         />
@@ -226,8 +220,8 @@ export default function TradeScreen() {
           style={styles.input}
         />
         {errors.size ? <Text style={styles.error}>{errors.size}</Text> : null}
-        {!minOk ? <Text style={styles.error}>Below xChange minimum order</Text> : null}
-        {!maxOk ? <Text style={styles.error}>Above xChange maximum order</Text> : null}
+        {!minOk ? <Text style={styles.error}>Below minimum order</Text> : null}
+        {!maxOk ? <Text style={styles.error}>Above maximum order</Text> : null}
 
         <View style={styles.metrics}>
           <Metric label="Min" value={centsToUSD(minOrder)} />
@@ -237,59 +231,15 @@ export default function TradeScreen() {
         </View>
       </GlassCard>
 
-      <GlassCard padding={14} style={styles.card}>
-        <Text style={styles.cardTitle}>xChange Availability</Text>
-        <Detail label="Trading" value={availability?.canQuote ? 'Can quote' : 'Unavailable'} />
-        <Detail label="Halt" value={availability?.isTradingHalted ? 'Halted' : 'Not halted'} />
-        <Detail label="Period" value={availability?.limitsPerPeriod?.currentPeriod ?? '--'} />
-        <Detail
-          label="Selected network"
-          value={selectedNetwork ? `${chain} enabled` : `${chain} not enabled`}
-        />
-        {availabilityQuery.isError ? (
-          <Text style={styles.error}>xChange limits are unavailable right now.</Text>
-        ) : null}
-      </GlassCard>
-
       <Pressable
         disabled={!canQuote || quoteMutation.isPending}
         style={[styles.submit, (!canQuote || quoteMutation.isPending) && styles.submitDisabled]}
         onPress={requestQuote}
       >
         <Text style={styles.submitText}>
-          {quoteMutation.isPending ? 'Creating Quote...' : 'Create Firm xChange Quote'}
+          {quoteMutation.isPending ? 'Preparing Order...' : 'Preview Order'}
         </Text>
       </Pressable>
-
-      {activeQuote ? (
-        <GlassCard padding={14} style={styles.resultCard} glow="green">
-        <Text style={styles.cardTitle}>Execution Payload</Text>
-          <Detail label="Quote ID" value={activeQuote.id} mono />
-          <Detail label="Price" value={typeof activeQuote.price === 'number' ? `$${formatPrice(activeQuote.price)}` : '--'} />
-          <Detail label="Quantity" value={String(activeQuote.quantity ?? '--')} />
-          <Detail label="Quote status" value={activeQuote.generalStatus ?? '--'} />
-          <Detail label="Blockchain" value={activeQuote.blockchainStatus ?? '--'} />
-          <Detail label="Wallet" value={shortAddress(address)} mono />
-          <Detail
-            label="Contract"
-            value={activeQuote.contract?.address ?? selectedNetwork?.contractAddress ?? 'SVM transaction payload'}
-            mono
-          />
-          <Detail
-            label="Token"
-            value={activeQuote.tokenDeployment?.address ?? selectedNetwork?.tokenAddress ?? '--'}
-            mono
-          />
-          <Detail label="Signature" value={activeQuote.signature ? 'Ready' : 'Pending'} />
-          <Text style={styles.caption}>
-            The quote is real. Submit the returned signature payload with a wallet signer
-            to complete atomic settlement.
-          </Text>
-          <Pressable disabled style={[styles.submit, styles.submitDisabled, styles.execute]}>
-            <Text style={styles.submitText}>Wallet signer required to execute</Text>
-          </Pressable>
-        </GlassCard>
-      ) : null}
     </ScrollView>
   );
 }
@@ -298,23 +248,6 @@ const Metric = ({ label, value }: { label: string; value: string }) => (
   <View style={styles.metric}>
     <Text style={styles.metricLabel}>{label}</Text>
     <Text style={styles.metricValue}>{value}</Text>
-  </View>
-);
-
-const Detail = ({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) => (
-  <View style={styles.detailRow}>
-    <Text style={styles.detailLabel}>{label}</Text>
-    <Text style={[styles.detailValue, mono && styles.mono]} numberOfLines={1}>
-      {value}
-    </Text>
   </View>
 );
 
@@ -330,7 +263,6 @@ const styles = StyleSheet.create({
   },
   subtitle: { color: COLORS.text.muted, marginTop: 4 },
   card: { marginBottom: SPACING.base },
-  resultCard: { marginTop: SPACING.base, marginBottom: SPACING.base },
   quoteRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -403,29 +335,6 @@ const styles = StyleSheet.create({
   },
   metricLabel: { color: COLORS.text.muted, fontSize: TYPOGRAPHY.sizes.xs },
   metricValue: { color: COLORS.text.primary, fontWeight: '800', marginTop: 4 },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 0.5,
-    borderBottomColor: COLORS.border.muted,
-    gap: SPACING.base,
-    paddingVertical: 10,
-  },
-  detailLabel: { color: COLORS.text.muted, fontWeight: '700', fontSize: TYPOGRAPHY.sizes.sm },
-  detailValue: {
-    flex: 1,
-    color: COLORS.text.primary,
-    fontWeight: '800',
-    textAlign: 'right',
-  },
-  mono: { fontFamily: TYPOGRAPHY.fonts.mono, fontSize: TYPOGRAPHY.sizes.xs },
-  caption: {
-    color: COLORS.text.muted,
-    fontSize: TYPOGRAPHY.sizes.xs,
-    lineHeight: 18,
-    marginTop: 12,
-  },
   submit: {
     minHeight: 52,
     borderRadius: RADIUS.sm,
@@ -434,6 +343,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   submitDisabled: { opacity: 0.45 },
-  execute: { marginTop: 14 },
   submitText: { color: COLORS.bg.primary, fontWeight: '900', fontSize: TYPOGRAPHY.sizes.sm },
 });
