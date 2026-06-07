@@ -1,115 +1,96 @@
-import React, { memo } from 'react';
+import React, { memo, useCallback } from 'react';
 import {
-  View,
-  Text,
   Image,
-  StyleSheet,
-  TouchableOpacity,
   Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import Animated, {
-  FadeInDown,
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 
-import { MarketPair } from '../../types';
-import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../../theme';
-import { formatPrice } from '../../utils/format';
 import { useHaptics } from '../../hooks/useHaptics';
-import { useFavoritesStore } from '../../store';
+import { useFavoritesStore } from '../../store/favoritesStore';
+import { COLORS, RADIUS, SPACING, TYPOGRAPHY } from '../../theme';
+import type { MarketPair } from '../../types/market';
+import { formatPrice } from '../../utils/format';
 
 interface PairRowProps {
   pair: MarketPair;
-  index: number;
   onPress: (pair: MarketPair) => void;
 }
 
-export const PairRow: React.FC<PairRowProps> = memo(({ pair, index, onPress }) => {
+const sideLabel = (pair: MarketPair) => {
+  if (pair.canBuy && pair.canSell) return 'SWAP';
+  if (pair.canBuy) return 'BUY';
+  return 'SELL';
+};
+
+const PairRowComponent: React.FC<PairRowProps> = ({ pair, onPress }) => {
   const { onSelect, onTap } = useHaptics();
-  const { has, toggle } = useFavoritesStore();
-  const isFav = has(pair.symbol);
-  const scale = useSharedValue(1);
-  const starScale = useSharedValue(1);
+  const toggle = useFavoritesStore((s) => s.toggle);
+  const isFav = useFavoritesStore((s) => s.favorites.includes(pair.symbol));
 
-  const pressStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-  const starStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: starScale.value }],
-  }));
-
-  const handlePress = () => {
+  const handlePress = useCallback(() => {
     onTap();
-    scale.value = withSpring(0.97, { damping: 15 }, () => {
-      scale.value = withSpring(1, { damping: 15 });
-    });
     onPress(pair);
-  };
+  }, [onTap, onPress, pair]);
+
+  const handleFav = useCallback(() => {
+    onSelect();
+    toggle(pair.symbol);
+  }, [onSelect, toggle, pair.symbol]);
 
   return (
-    <Animated.View
-      entering={FadeInDown.delay(index * 35).duration(280).springify()}
-      style={pressStyle}
+    <Pressable
+      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      onPress={handlePress}
     >
-      <Pressable
-        style={styles.row}
-        onPress={handlePress}
-        onPressIn={() => {
-          scale.value = withSpring(0.98, { damping: 20 });
-        }}
-        onPressOut={() => {
-          scale.value = withSpring(1, { damping: 20 });
-        }}
+      <View style={styles.badge}>
+        <Image source={{ uri: pair.logo }} style={styles.logo} />
+      </View>
+
+      <View style={styles.info}>
+        <View style={styles.symbolRow}>
+          <Text style={styles.symbol}>{pair.symbol}</Text>
+          <Text style={styles.side}>{sideLabel(pair)}</Text>
+        </View>
+        <Text style={styles.name} numberOfLines={1}>
+          {pair.name}
+        </Text>
+      </View>
+
+      <View style={styles.priceWrap}>
+        <Text style={styles.price}>
+          {typeof pair.price === 'number' ? `$${formatPrice(pair.price)}` : '--'}
+        </Text>
+        {pair.isTradingHalted ? <Text style={styles.halted}>HALTED</Text> : null}
+      </View>
+
+      <TouchableOpacity
+        style={[styles.fav, isFav && styles.favActive]}
+        onPress={handleFav}
+        hitSlop={10}
       >
-        <View style={styles.badge}>
-          <Image source={{ uri: pair.logo }} style={styles.logo} />
-        </View>
-
-        <View style={styles.info}>
-          <View style={styles.symbolRow}>
-            <Text style={styles.symbol}>{pair.base}</Text>
-            <Text style={styles.type}>{pair.assetType.toUpperCase()}</Text>
-          </View>
-          <Text style={styles.name} numberOfLines={1}>
-            {pair.name}
-          </Text>
-        </View>
-
-        <View style={styles.priceWrap}>
-          <Text style={styles.price}>
-            {typeof pair.price === 'number' ? `$${formatPrice(pair.price)}` : '--'}
-          </Text>
-          {pair.isTradingHalted ? (
-            <Text style={styles.halted}>HALTED</Text>
-          ) : null}
-        </View>
-
-        <TouchableOpacity
-          style={[styles.fav, isFav && styles.favActive]}
-          onPress={() => {
-            onSelect();
-            starScale.value = withSpring(1.28, { damping: 10, stiffness: 420 }, () => {
-              starScale.value = withSpring(1, { damping: 12, stiffness: 360 });
-            });
-            toggle(pair.symbol);
-          }}
-          hitSlop={10}
-        >
-          <Animated.View style={starStyle}>
-            <Ionicons
-              name={isFav ? 'bookmark' : 'bookmark-outline'}
-              size={18}
-              color={isFav ? '#F9A825' : COLORS.text.muted}
-            />
-          </Animated.View>
-        </TouchableOpacity>
-      </Pressable>
-    </Animated.View>
+        <Ionicons
+          name={isFav ? 'bookmark' : 'bookmark-outline'}
+          size={18}
+          color={isFav ? '#F9A825' : COLORS.text.muted}
+        />
+      </TouchableOpacity>
+    </Pressable>
   );
-});
+};
+
+const arePropsEqual = (prev: PairRowProps, next: PairRowProps): boolean =>
+  prev.pair.address === next.pair.address &&
+  prev.pair.price === next.pair.price &&
+  prev.pair.canBuy === next.pair.canBuy &&
+  prev.pair.canSell === next.pair.canSell &&
+  prev.pair.isTradingHalted === next.pair.isTradingHalted &&
+  prev.onPress === next.onPress;
+
+export const PairRow = memo(PairRowComponent, arePropsEqual);
 
 const styles = StyleSheet.create({
   row: {
@@ -121,6 +102,7 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border.muted,
     gap: SPACING.sm,
   },
+  rowPressed: { backgroundColor: COLORS.bg.secondary },
   badge: {
     width: 40,
     height: 40,
@@ -132,23 +114,16 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg.elevated,
     overflow: 'hidden',
   },
-  logo: {
-    width: 40,
-    height: 40,
-  },
+  logo: { width: 40, height: 40 },
   info: { flex: 1, minWidth: 0 },
-  symbolRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
+  symbolRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   symbol: {
     fontSize: TYPOGRAPHY.sizes.md,
     fontWeight: '600',
     color: COLORS.text.primary,
     fontFamily: TYPOGRAPHY.fonts.heading,
   },
-  type: {
+  side: {
     color: COLORS.text.muted,
     fontSize: 9,
     fontWeight: '800',
@@ -157,13 +132,8 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.xs,
     paddingHorizontal: 5,
     paddingVertical: 2,
-    overflow: 'hidden',
   },
-  name: {
-    fontSize: TYPOGRAPHY.sizes.xs,
-    color: COLORS.text.muted,
-    marginTop: 2,
-  },
+  name: { fontSize: TYPOGRAPHY.sizes.xs, color: COLORS.text.muted, marginTop: 2 },
   priceWrap: { alignItems: 'flex-end', gap: 3, minWidth: 78 },
   price: {
     fontSize: TYPOGRAPHY.sizes.sm,
@@ -171,11 +141,7 @@ const styles = StyleSheet.create({
     color: COLORS.text.primary,
     fontFamily: TYPOGRAPHY.fonts.mono,
   },
-  halted: {
-    color: COLORS.red.primary,
-    fontSize: 10,
-    fontWeight: '700',
-  },
+  halted: { color: COLORS.red.primary, fontSize: 10, fontWeight: '700' },
   fav: {
     width: 34,
     height: 34,

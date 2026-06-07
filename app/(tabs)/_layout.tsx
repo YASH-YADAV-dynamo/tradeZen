@@ -8,16 +8,38 @@ import {
   Platform,
   useWindowDimensions,
 } from 'react-native';
+
+interface TabRoute {
+  key: string;
+  name: string;
+}
+
+interface TabBarState {
+  index: number;
+  routes: TabRoute[];
+}
+
+interface TabBarNavigation {
+  emit: (event: { type: 'tabPress'; target: string; canPreventDefault: true }) => {
+    defaultPrevented: boolean;
+  };
+  navigate: (name: string) => void;
+}
+
+interface CustomTabBarProps {
+  state: TabBarState;
+  navigation: TabBarNavigation;
+}
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { COLORS, TYPOGRAPHY } from '../../src/theme';
 import { useHaptics } from '../../src/hooks/useHaptics';
+import { BlurSurface } from '../../src/platform/BlurSurface';
 
 const Icons = {
   markets: (active: boolean) => (
@@ -26,6 +48,15 @@ const Icons = {
         <View style={[styles.bar, styles.bar1, active && styles.barActive]} />
         <View style={[styles.bar, styles.bar2, active && styles.barActive]} />
         <View style={[styles.bar, styles.bar3, active && styles.barActive]} />
+      </View>
+    </View>
+  ),
+  news: (active: boolean) => (
+    <View style={styles.iconWrap}>
+      <View style={[styles.newsFrame, active && styles.newsFrameActive]}>
+        <View style={[styles.newsLineWide, active && styles.newsLineActive]} />
+        <View style={[styles.newsLine, active && styles.newsLineActive]} />
+        <View style={[styles.newsLineShort, active && styles.newsLineActive]} />
       </View>
     </View>
   ),
@@ -67,20 +98,20 @@ const Icons = {
 
 const TABS = [
   { name: 'index', label: 'Markets', icon: Icons.markets },
-  // Trading is temporarily hidden from the app shell.
-  // { name: 'trade', label: 'Trade', icon: Icons.trade },
+  { name: 'news', label: 'News', icon: Icons.news },
+  { name: 'trade', label: 'Trade', icon: Icons.trade },
   { name: 'portfolio', label: 'Portfolio', icon: Icons.portfolio },
   { name: 'settings', label: 'Settings', icon: Icons.settings },
 ];
 
-function CustomTabBar({ state, navigation }: any) {
+function CustomTabBar({ state, navigation }: CustomTabBarProps) {
   const { onTap } = useHaptics();
   const { width } = useWindowDimensions();
   const { bottom } = useSafeAreaInsets();
   const visibleTabs = TABS.map((tab) => ({
     ...tab,
-    route: state.routes.find((route: any) => route.name === tab.name),
-  })).filter((tab) => tab.route);
+    route: state.routes.find((route) => route.name === tab.name),
+  })).filter((tab): tab is typeof tab & { route: TabRoute } => !!tab.route);
   const activeRouteKey = state.routes[state.index]?.key;
   const activeIndex = Math.max(
     0,
@@ -115,7 +146,7 @@ function CustomTabBar({ state, navigation }: any) {
         },
       ]}
     >
-      <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
+      <BlurSurface intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
       <View style={styles.borderTop} />
       <Animated.View style={[styles.indicator, { width: tabWidth }, indicatorStyle]} />
 
@@ -136,6 +167,15 @@ function CustomTabBar({ state, navigation }: any) {
   );
 }
 
+interface TabButtonProps {
+  tab: (typeof TABS)[number];
+  isFocused: boolean;
+  routeKey: string;
+  routeName: string;
+  navigation: TabBarNavigation;
+  onTap: () => void;
+}
+
 function TabButton({
   tab,
   isFocused,
@@ -143,7 +183,7 @@ function TabButton({
   routeName,
   navigation,
   onTap,
-}: any) {
+}: TabButtonProps) {
   const scaleAnim = useSharedValue(1);
   const pressStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scaleAnim.value }],
@@ -184,8 +224,8 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen name="index" />
-      {/* Trading is temporarily hidden from tabs. */}
-      <Tabs.Screen name="trade" options={{ href: null }} />
+      <Tabs.Screen name="news" />
+      <Tabs.Screen name="trade" />
       <Tabs.Screen name="portfolio" />
       <Tabs.Screen name="settings" />
     </Tabs>
@@ -255,6 +295,20 @@ const styles = StyleSheet.create({
   bar1: { height: 8 },
   bar2: { height: 14 },
   bar3: { height: 11 },
+  newsFrame: {
+    width: 18,
+    height: 16,
+    borderWidth: 1.5,
+    borderColor: COLORS.text.muted,
+    borderRadius: 3,
+    padding: 2,
+    justifyContent: 'space-between',
+  },
+  newsFrameActive: { borderColor: COLORS.green.primary },
+  newsLineWide: { height: 2, width: '100%', backgroundColor: COLORS.text.muted, borderRadius: 1 },
+  newsLine: { height: 1.5, width: '85%', backgroundColor: COLORS.text.muted, borderRadius: 1 },
+  newsLineShort: { height: 1.5, width: '65%', backgroundColor: COLORS.text.muted, borderRadius: 1 },
+  newsLineActive: { backgroundColor: COLORS.green.primary },
   crosshair: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
   crossH: {
     position: 'absolute',

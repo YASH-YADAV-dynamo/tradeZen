@@ -3,7 +3,7 @@ import type { ExpoConfig } from 'expo/config';
 const config: ExpoConfig = {
   name: 'TradeZen',
   description:
-    'TradeZen is a calm mobile trading workspace for discovering xStocks, tracking tokenized stocks, managing a watchlist, and preparing xChange trades.',
+    'TradeZen is a calm mobile trading workspace for Bebop RFQ swaps, token discovery, watchlists, and portfolio tracking.',
   slug: 'tradezen',
   scheme: 'tradezen',
   version: '1.0.0',
@@ -31,7 +31,7 @@ const config: ExpoConfig = {
     name: 'TradeZen - Tokenized Stock Trading',
     shortName: 'TradeZen',
     description:
-      'Discover xStocks, search tokenized stocks and ETFs, build a watchlist, and prepare xChange trades in a fast mobile-first trading app.',
+      'Discover tokens, build a watchlist, and execute Bebop RFQ trades in a fast mobile-first trading app.',
     lang: 'en',
     themeColor: '#07110b',
     backgroundColor: '#07110b',
@@ -42,20 +42,25 @@ const config: ExpoConfig = {
     seo: {
       title: 'TradeZen - Tokenized Stock Trading App',
       description:
-        'TradeZen helps traders discover xStocks, track tokenized stocks and ETFs, build watchlists, and prepare xChange trades from a clean mobile interface.',
+        'TradeZen helps traders discover tokens, build watchlists, and execute Bebop RFQ swaps from a clean mobile interface.',
       keywords: [
         'TradeZen',
-        'xStocks',
-        'tokenized stocks',
-        'stock trading app',
-        'xChange trading',
-        'crypto stocks',
+        'Bebop',
+        'RFQ trading',
+        'DEX',
+        'crypto swap',
         'watchlist',
         'mobile trading',
       ],
     },
   },
-  plugins: ['expo-router', 'expo-audio', 'expo-asset'],
+  plugins: [
+    'expo-router',
+    'expo-audio',
+    'expo-asset',
+    'expo-secure-store',
+    'expo-web-browser',
+  ],
 };
 
 export default config;

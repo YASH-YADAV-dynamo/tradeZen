@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -73,12 +74,18 @@ const ToastItem: React.FC<ToastItemProps> = ({ toast, onHide }) => {
       ? '#F9A825'
       : COLORS.border.accent;
 
-  const icon =
-    toast.type === 'success' ? '✓' : toast.type === 'error' ? '✕' : toast.type === 'warning' ? '⚠' : 'i';
+  const iconName =
+    toast.type === 'success'
+      ? 'checkmark-circle'
+      : toast.type === 'error'
+        ? 'close-circle'
+        : toast.type === 'warning'
+          ? 'warning'
+          : 'information-circle';
 
   return (
     <Animated.View style={[styles.toast, { borderLeftColor: borderColor }, animStyle]}>
-      <Text style={[styles.icon, { color: borderColor }]}>{icon}</Text>
+      <Ionicons name={iconName} size={18} color={borderColor} style={styles.icon} />
       <Text style={styles.message} numberOfLines={2}>
         {toast.message}
       </Text>
@@ -141,13 +148,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  icon: {
-    fontSize: 14,
-    fontWeight: '700',
-    width: 16,
-    textAlign: 'center',
-    fontFamily: TYPOGRAPHY.fonts.heading,
-  },
+  icon: { width: 20 },
   message: {
     flex: 1,
     color: COLORS.text.primary,

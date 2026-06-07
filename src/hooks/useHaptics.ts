@@ -1,63 +1,41 @@
-import { useCallback, useEffect } from 'react';
-import { setAudioModeAsync, useAudioPlayer } from 'expo-audio';
-import * as Haptics from 'expo-haptics';
+import { useCallback } from 'react';
 
+import { impact, notify } from '../platform/haptics';
+import { playSound } from '../platform/sounds';
 import { useSettingsStore } from '../store/settingsStore';
 
+/**
+ * Unified haptic + sound feedback hook.
+ * - Pure no-op on web (or when user disabled in Settings)
+ * - Zero re-renders: only reads single boolean from store
+ * - No heavy module init per component
+ */
 export const useHaptics = () => {
   const enabled = useSettingsStore((state) => state.hapticsEnabled);
-  const tapPlayer = useAudioPlayer(require('../../assets/sounds/tap.wav'));
-  const selectPlayer = useAudioPlayer(require('../../assets/sounds/select.wav'));
-  const successPlayer = useAudioPlayer(require('../../assets/sounds/success.wav'));
-  const errorPlayer = useAudioPlayer(require('../../assets/sounds/error.wav'));
-
-  useEffect(() => {
-    void setAudioModeAsync({ playsInSilentMode: true });
-  }, []);
-
-  const play = useCallback(
-    (player: typeof tapPlayer) => {
-      if (!enabled) return;
-      try {
-        player.seekTo(0);
-        player.play();
-      } catch {
-        // Audio feedback should never block the primary UI action.
-      }
-    },
-    [enabled]
-  );
 
   const onTap = useCallback(() => {
     if (!enabled) return;
-    play(tapPlayer);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    setTimeout(() => {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      void Haptics.selectionAsync();
-    }, 36);
-  }, [enabled, play, tapPlayer]);
+    playSound('tap');
+    impact('heavy');
+  }, [enabled]);
 
   const onSelect = useCallback(() => {
     if (!enabled) return;
-    play(selectPlayer);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    setTimeout(() => {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }, 42);
-  }, [enabled, play, selectPlayer]);
+    playSound('select');
+    impact('medium');
+  }, [enabled]);
 
   const onSuccess = useCallback(() => {
     if (!enabled) return;
-    play(successPlayer);
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, [enabled, play, successPlayer]);
+    playSound('success');
+    notify('success');
+  }, [enabled]);
 
   const onError = useCallback(() => {
     if (!enabled) return;
-    play(errorPlayer);
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-  }, [enabled, errorPlayer, play]);
+    playSound('error');
+    notify('error');
+  }, [enabled]);
 
   return { onTap, onSelect, onSuccess, onError };
 };

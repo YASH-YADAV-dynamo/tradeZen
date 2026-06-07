@@ -7,7 +7,7 @@ interface FavoritesState {
 }
 
 export const useFavoritesStore = create<FavoritesState>((set, get) => ({
-  favorites: ['AAPLx', 'NVDAx'],
+  favorites: [],
   has: (symbol) => get().favorites.includes(symbol),
   toggle: (symbol) =>
     set((state) => ({

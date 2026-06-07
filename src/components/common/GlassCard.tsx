@@ -1,21 +1,20 @@
 import React from 'react';
-import { View, StyleSheet, ViewStyle, Pressable } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-} from 'react-native-reanimated';
+import { Pressable, StyleSheet, View, ViewStyle } from 'react-native';
 
 import { COLORS, RADIUS, SHADOWS } from '../../theme';
 
 interface GlassCardProps {
   children: React.ReactNode;
-  style?: ViewStyle;
+  style?: ViewStyle | ViewStyle[];
   onPress?: () => void;
   glow?: 'green' | 'red' | 'none';
   padding?: number;
 }
 
+/**
+ * Static card surface. Press feedback uses Pressable's built-in
+ * pressed state (no Reanimated worklets) to stay light on web.
+ */
 export const GlassCard: React.FC<GlassCardProps> = ({
   children,
   style,
@@ -23,12 +22,6 @@ export const GlassCard: React.FC<GlassCardProps> = ({
   glow = 'none',
   padding = 16,
 }) => {
-  const scale = useSharedValue(1);
-
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
   const borderColor =
     glow === 'green'
       ? COLORS.green.dim
@@ -43,29 +36,19 @@ export const GlassCard: React.FC<GlassCardProps> = ({
       ? SHADOWS.red
       : SHADOWS.card;
 
+  const cardStyle = [styles.card, { padding, borderColor }, shadowStyle, style];
+
   if (!onPress) {
-    return (
-      <View style={[styles.card, { padding, borderColor }, shadowStyle, style]}>
-        {children}
-      </View>
-    );
+    return <View style={cardStyle}>{children}</View>;
   }
 
   return (
-    <Animated.View style={animStyle}>
-      <Pressable
-        onPress={onPress}
-        onPressIn={() => {
-          scale.value = withSpring(0.97, { damping: 15, stiffness: 400 });
-        }}
-        onPressOut={() => {
-          scale.value = withSpring(1, { damping: 15, stiffness: 400 });
-        }}
-        style={[styles.card, { padding, borderColor }, shadowStyle, style]}
-      >
-        {children}
-      </Pressable>
-    </Animated.View>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [...cardStyle, pressed && styles.pressed]}
+    >
+      {children}
+    </Pressable>
   );
 };
 
@@ -75,4 +58,5 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.lg,
     borderWidth: 1,
   },
+  pressed: { opacity: 0.85 },
 });

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, ViewStyle } from 'react-native';
+import { DimensionValue, StyleSheet, View, ViewStyle } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -11,7 +11,7 @@ import Animated, {
 import { COLORS, RADIUS } from '../../theme';
 
 interface SkeletonProps {
-  width?: number | string;
+  width?: DimensionValue;
   height?: number;
   borderRadius?: number;
   style?: ViewStyle;
@@ -41,12 +41,7 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   return (
     <Animated.View
       style={[
-        {
-          width: width as any,
-          height,
-          borderRadius,
-          backgroundColor: COLORS.bg.elevated,
-        },
+        { width, height, borderRadius, backgroundColor: COLORS.bg.elevated },
         animStyle,
         style,
       ]}

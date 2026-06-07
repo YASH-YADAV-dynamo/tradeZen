@@ -3,25 +3,26 @@ import { Text, TouchableOpacity, StyleSheet, View } from 'react-native';
 
 import { COLORS, SPACING, TYPOGRAPHY, RADIUS } from '../../theme';
 import { useHaptics } from '../../hooks/useHaptics';
+import type { MarketFilter } from '../../utils/marketSearch';
 
-export type FilterCategory = 'all' | 'favorites' | 'stocks' | 'etfs';
+export type FilterCategory = MarketFilter;
 
 const FILTERS: { key: FilterCategory; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'favorites', label: 'Watchlist' },
-  { key: 'stocks', label: 'Stocks' },
-  { key: 'etfs', label: 'ETFs' },
+  { key: 'buy', label: 'Buy' },
+  { key: 'sell', label: 'Sell' },
 ];
 
 interface FilterBarProps {
   active: FilterCategory;
   onChange: (f: FilterCategory) => void;
-  showEtfs: boolean;
+  showSell: boolean;
 }
 
-export const FilterBar: React.FC<FilterBarProps> = ({ active, onChange, showEtfs }) => {
+export const FilterBar: React.FC<FilterBarProps> = ({ active, onChange, showSell }) => {
   const { onSelect } = useHaptics();
-  const filters = FILTERS.filter((filter) => showEtfs || filter.key !== 'etfs');
+  const filters = FILTERS.filter((f) => showSell || f.key !== 'sell');
 
   return (
     <View style={styles.container}>
@@ -37,9 +38,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({ active, onChange, showEtfs
             }}
             activeOpacity={0.75}
           >
-            <Text style={[styles.label, isActive && styles.labelActive]}>
-              {f.label}
-            </Text>
+            <Text style={[styles.label, isActive && styles.labelActive]}>{f.label}</Text>
           </TouchableOpacity>
         );
       })}

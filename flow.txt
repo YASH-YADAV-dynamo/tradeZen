@@ -1,0 +1,614 @@
+================================================================================
+TRADEZEN — FRONTEND ↔ BACKEND INTEGRATION GUIDE (COMPLETE)
+Version: 2.3 | Updated: 2026-06-07
+Backend: Go 1.22 + Fiber v2 | Frontend: Expo SDK 54 + React Native + TypeScript
+================================================================================
+
+TABLE OF CONTENTS
+─────────────────
+  0. Quick Start
+  1. Base URL & Headers
+  2. Full Endpoint Index
+  3. Chains
+  4. Health
+  5. Auth (Wallet Sign → JWT)
+  6. Tokens
+  6b. Prices (REST Fallback)
+  7. Quote (RFQ — Gasless or Self-Execution)
+  8. Order (Submit Signed Trade — Gasless Only)
+  9. Order Status
+ 10. Portfolio
+ 11. News (REST)
+ 12. News (SSE Stream)
+ 13. Live Prices (WebSocket)
+ 14. Order Updates (WebSocket)
+ 15. Complete TypeScript Types (copy-paste)
+ 16. Axios Client Setup
+ 17. React Query Hooks
+ 18. Zustand Stores
+ 19. Realtime Clients (WS + SSE)
+ 20. Full Trade Flow (step-by-step)
+ 21. Error Reference
+ 22. Security Rules
+ 23. RN File Structure (as implemented)
+ 24. parsePriceUpdate.ts (reference)
+ 25. Backend ENV (reference)
+ 26. Wallet Abstraction & UX Gating (this app)
+
+================================================================================
+0. QUICK START
+================================================================================
+
+Frontend .env (Expo):
+  EXPO_PUBLIC_API_URL=http://localhost:8080         # dev
+  EXPO_PUBLIC_API_URL=https://xxx.railway.app       # prod
+  EXPO_PUBLIC_PRIVY_APP_ID=                         # optional, see §26
+  EXPO_PUBLIC_PRIVY_CLIENT_ID=                      # optional, see §26
+
+Install:
+  npm install @tanstack/react-query axios zustand react-native-sse
+                @microsoft/fetch-event-source
+
+Minimal boot:
+  1. GET  /api/tokens?chain=ethereum               → render markets
+  2. WS   /ws/prices?chain=ethereum                → live prices (REST polls if quiet)
+  3. GET  /api/auth/nonce + POST /api/auth/verify  → get JWT (lazy, only on Trade click)
+  4. POST /api/quote (JWT)                         → quote (gasless or self-exec)
+  5a. Gasless (default): sign toSign → POST /api/order → WS /ws/order/:quoteId
+  5b. Self-execution: broadcast quote.tx from wallet (user pays gas)
+  6. GET  /api/prices?chain= every 15s             → REST fallback when WS quiet
+
+================================================================================
+1. BASE URL & HEADERS
+================================================================================
+
+Base URL : process.env.EXPO_PUBLIC_API_URL  (no trailing slash)
+
+REST headers (all JSON endpoints):
+  Content-Type: application/json
+  Authorization: Bearer <jwt>                     (protected routes only)
+
+CORS:  backend allows origins from CORS_ORIGINS env (default http://localhost:8081)
+
+Rate limits (per client IP):
+  POST /api/quote → 100 requests / minute
+  POST /api/order → 20 requests / minute
+
+================================================================================
+2. FULL ENDPOINT INDEX
+================================================================================
+
+METHOD  PATH                          AUTH    DESCRIPTION
+──────  ────────────────────────────  ──────  ─────────────────────────────
+GET     /health                       none    Health check
+GET     /api/auth/nonce               none    Get sign-in message
+POST    /api/auth/verify              none    Verify signature → JWT
+GET     /api/tokens                   none    Tradeable token list per chain
+GET     /api/prices                   none    Cached USD prices snapshot per chain
+GET     /api/news                     none    News feed (REST)
+POST    /api/quote                    JWT     RFQ quote (gasless or self-execution)
+POST    /api/order                    JWT     Submit signed gasless order
+GET     /api/order/:quoteId/status    JWT     Poll order status (REST fallback)
+GET     /api/portfolio                JWT     Trade history + mark prices
+GET     /sse/news                     JWT     Real-time news stream (SSE)
+WS      /ws/prices                    none    Live price ticks per chain
+WS      /ws/order/:quoteId            none    Live order status per quote
+
+================================================================================
+3. CHAINS
+================================================================================
+
+Pass chain as a slug string in ?chain= or request body field "chain".
+Default if omitted: "ethereum".
+
+Known slugs:
+  ethereum  arbitrum  polygon  base  bsc  optimism  avalanche
+Stored in walletStore as `WalletChain`. Solana NOT supported.
+
+================================================================================
+4. HEALTH
+================================================================================
+
+GET /health  → { "status": "ok" }
+
+================================================================================
+5. AUTH (Wallet Sign → JWT)
+================================================================================
+
+Flow:
+  1. GET  /api/auth/nonce?wallet=0x...  → { "nonce": "Sign this message..." }
+  2. wallet.personalSign(nonce)         → 65-byte hex signature
+  3. POST /api/auth/verify { wallet, signature } → { "token": "<jwt 24h>" }
+
+Errors: 400 wallet required / invalid request / missing fields,
+        401 nonce expired or not found / invalid signature format / signature does not match wallet.
+
+Implementation: src/auth/walletAuth.ts (`authenticateWallet(address, signMessage)`).
+Triggered by the wallet abstraction (§26) — never by the user directly.
+
+================================================================================
+6. TOKENS
+================================================================================
+
+GET /api/tokens?chain=ethereum  (none, 24h cache)
+
+Response Token[]  (canBuy || canSell). Preserve EXACT checksum casing
+when feeding addresses back into POST /api/quote.
+
+Implementation: `useTokens()` returns `UIToken[]` (with chain + canBuy/canSell
+flattened for the UI); maps from raw Token[] via `toUIToken()`.
+
+================================================================================
+6b. PRICES (REST FALLBACK)
+================================================================================
+
+GET /api/prices?chain=ethereum  (no auth)
+
+Backend sources (priority):
+  1. Bebop Price WS stream (when entitled) → real-time order books
+  2. Bebop /pmm/{chain}/v3/token-info REST seed (~30s)
+     → priceUsd for ALL ~283 tradeable tokens, no Price API entitlement needed
+
+Status today: option 2 active. /api/prices and /ws/prices serve full token
+coverage on ethereum. Bebop Price WS still 403 until entitlement enabled.
+
+Response:
+  {
+    "chain": "ethereum",
+    "updatedAt": 1780812883,
+    "prices": { "0xc02a...756cc2": 1600.48, ...283 entries },
+    "books":  { ... }                        // empty until Price WS entitled
+  }
+
+Frontend rule (`useRestPrices`):
+  Always poll when (Date.now() - priceStore.lastUpdated > 15s) OR (!wsConnected).
+  Backs off automatically once WS pushes resume.
+
+================================================================================
+7. QUOTE (RFQ — Gasless or Self-Execution)
+================================================================================
+
+POST /api/quote  (JWT, 100/min)
+
+Request body:
+  { chain, sellToken, buyToken, sellAmount, takerAddress, gasless? }
+
+  takerAddress MUST equal JWT.wallet (case-insensitive).
+  Omit `gasless` to use the server default (BEBOP_GASLESS, true).
+
+Two execution modes:
+
+  GASLESS (gasless: true)
+    Bebop status:   QUOTE_SUCCESS
+    Response field: toSign (EIP-712 message)
+    Next:           sign toSign → POST /api/order { quoteId, signature }
+
+  SELF-EXECUTION (gasless: false)
+    Bebop status:   SIG_SUCCESS
+    Response field: tx { to, data, from, value, gas, gasPrice }
+    Next:           wallet.sendTransaction(tx)  — POST /api/order NOT called
+
+Response (selected fields):
+  quoteId, status, gasless, expiresAt, chainId,
+  buyTokens / sellTokens  : Record<addr, {amount, decimals, symbol, priceUsd,
+                                          amountBeforeFee?, minimumAmount?}>,
+  toSign? / tx?,
+  settlementAddress, onchainOrderType,
+  priceImpact, feeBps, feeTier   // explorer 10bps · trader 15bps · pro 8bps
+
+Errors: 400 invalid request / missing required fields / sellAmount must be > 0 /
+        quote expired before delivery / 401 missing or invalid token /
+        403 takerAddress must match authenticated wallet / 429 rate limit /
+        502 <Bebop verbatim>.
+
+Implementation: `useQuote()` mutation. On success → `tradeStore.setQuote(q)`.
+
+================================================================================
+8. ORDER (Submit Signed Trade — Gasless Only)
+================================================================================
+
+POST /api/order  (JWT, 20/min)
+Used only when quote.gasless === true.
+
+Request: { quoteId, signature }   // EIP-712 signature of quote.toSign
+Response: { orderId, status: "Pending", txHash: "" }
+
+After 200: open /ws/order/:quoteId (REST polling as fallback).
+
+Errors: 400 invalid / missing / quote not found or expired,
+        403 quote wallet mismatch, 429, 502 order submission failed.
+
+================================================================================
+9. ORDER STATUS
+================================================================================
+
+GET /api/order/:quoteId/status  (JWT)
+Response: { orderId, status, txHash, amounts? }
+Status lifecycle: Pending → Settled | Confirmed | Failed.
+
+Implementation (`OrderStatus` component):
+  WS push drives `orderStore.setStatus(...)`. If we go > 5s without a WS
+  update on a non-terminal order, `useOrderStatus(quoteId, true)` kicks in
+  and polls every 2s until terminal.
+
+================================================================================
+10. PORTFOLIO
+================================================================================
+
+GET /api/portfolio?chain=ethereum&size=50  (JWT)
+
+Returns trades, summary, markPrices (lowercase addr → USD).
+Seed priceStore from markPrices on every successful fetch.
+
+Implementation: `usePortfolio()` (enabled when JWT present).
+
+================================================================================
+11. NEWS — REST (Initial Load)
+================================================================================
+
+GET /api/news?symbol&type&limit&since   (public)
+Implementation: `useNews(params)` (60s staleTime).
+
+================================================================================
+12. NEWS — SSE (Real-time Push)
+================================================================================
+
+GET /sse/news?symbols=WETH,AAPL  (JWT required)
+Events: `connected` (last 10 cached) · `news` · `ping` (every 25s)
+
+Implementation (`connectNewsStream`):
+  Native: `react-native-sse` (lazy required; sends Authorization header).
+  Web:    `@microsoft/fetch-event-source` (native EventSource cannot send
+          headers; this polyfill can).
+
+================================================================================
+13. LIVE PRICES (WebSocket + REST Fallback)
+================================================================================
+
+WS  ws[s]://<API>/ws/prices?chain=ethereum   (no auth)
+
+Server pushes a snapshot immediately, then deltas. parsePriceUpdate.ts
+handles every shape the backend or Bebop emits:
+  A. Normalized snapshot   { chain, updatedAt, prices, books? }
+  B. Legacy wrapper        { prices: {addr: usd} }
+  C. Flat address map      { addr: usd, ... }
+  D. Raw Bebop books       { "base/quote": { bids, asks, last_update_ts } }
+
+Implementation:
+  `src/ws/priceSocket.ts` is a reference-counted singleton. Multiple screens
+  call `subscribePriceFeed(chain)`; only the first opens the socket, only
+  the last close-out tears it down. Exponential reconnect 1s → 30s.
+  Sets `priceStore.wsConnected`.
+
+Pair with `useRestPrices` (poll /api/prices when stale or WS down).
+
+================================================================================
+14. ORDER UPDATES (WebSocket)
+================================================================================
+
+WS /ws/order/:quoteId  (no auth — quoteId is the secret)
+Single text frame per status:
+  { orderId, status: Pending|Settled|Confirmed|Failed, txHash, amounts? }
+
+On terminal status: close WS, invalidate ['portfolio'] queries.
+
+================================================================================
+15. COMPLETE TYPESCRIPT TYPES (src/api/types.ts)
+================================================================================
+
+Defined in src/api/types.ts — kept in sync with v2.3:
+
+  ApiError, FeeTier, ChainSlug
+  NonceResponse, VerifyRequest, VerifyResponse, JWTPayload
+  TokenAvailability, Token
+  QuoteRequest (with optional gasless),
+  QuoteStatus, BebopTx, TokenAmount, ToSign,
+  QuoteResponse (status, gasless, toSign?, tx?)
+  OrderRequest, OrderResponse, OrderAmount, OrderStatus
+  TradeTokenInfo, Trade, PortfolioSummary, PortfolioResponse
+  NewsSource, NewsAssetType, NewsSentiment, NewsImportance,
+  NewsItem, NewsQueryParams, SSEConnectedEvent, SSEPingEvent
+  PriceLevel, PriceBookEntry, PriceBookSnapshot,
+  PricesResponse, PriceWSMessage
+  HealthResponse
+
+================================================================================
+16. AXIOS CLIENT (src/api/backend.ts)
+================================================================================
+
+`api = axios.create({ baseURL: getApiBaseUrl(), timeout: 15s })`
+
+Interceptors:
+  request   – attach `Authorization: Bearer ${jwt}` from walletStore
+  response  – on 401 → walletStore.clearJwt(); normalize errors to Error(message)
+
+URL helpers:
+  getApiBaseUrl()  – dev-aware: rewrites localhost to LAN IP on native devices
+                     via expo-constants (web returns the raw env value)
+  getWsBaseUrl()   – same, with http→ws / https→wss swap
+
+`apiPaths` exports stable paths for every endpoint.
+
+================================================================================
+17. REACT QUERY HOOKS (src/api/hooks/)
+================================================================================
+
+useTokens           GET /api/tokens                       24h staleTime
+useAuth             useNonce / useVerify                  (mutation)
+useRestPrices       GET /api/prices, polls every 15s when stale or WS down
+useQuote            POST /api/quote (mutation; writes tradeStore)
+useOrder            POST /api/order (mutation; sets activeOrder)
+useOrderStatus      GET /api/order/:id/status, 2s polling fallback
+usePortfolio        GET /api/portfolio (JWT-gated)
+useNews             GET /api/news (60s staleTime)
+useMarketPairs      composes UIToken + price into MarketPair[] for /markets
+
+================================================================================
+18. ZUSTAND STORES (src/store/)
+================================================================================
+
+walletStore      address, chain (default 'ethereum'), jwt;
+                 selectors: useWalletAddress, useWalletChain, useWalletJwt.
+
+tradeStore       sellToken, buyToken, sellAmount, quote, isQuoteLoading,
+                 quoteError; any input change wipes the quote.
+
+orderStore       activeOrder {orderId, quoteId, status, txHash}, history,
+                 lastUpdatedAt (drives REST fallback in OrderStatus).
+
+priceStore       prices (lowercase addr → USD), lastUpdated, wsConnected;
+                 delta-merge (only re-renders when a value moves).
+                 Selector: useTokenPrice(address).
+
+newsStore        items (max 100), bySymbol; selector hooks
+                 useNewsForSymbol / useNewsForAddress memoize per key.
+
+settingsStore    hapticsEnabled (also gates sounds).
+favoritesStore   favorite token symbols.
+
+================================================================================
+19. REALTIME CLIENTS (src/ws/)
+================================================================================
+
+priceSocket.ts   subscribePriceFeed(chain) – ref-counted singleton, exp backoff.
+orderSocket.ts   connectOrderSocket(quoteId) – auto-closes on terminal status.
+newsStream.ts    connectNewsStream(opts) – fetch-event-source on web,
+                 react-native-sse on native.
+
+All three are SSR-safe (no crashes when WebSocket / EventSource are absent).
+
+================================================================================
+20. FULL TRADE FLOW (UX-aligned, this app)
+================================================================================
+
+Markets (tab)               — no wallet required.
+                              · GET /api/tokens, WS /ws/prices, useRestPrices poll.
+                              · "Connect" pill in header → ConnectWalletModal.
+
+Token Detail /token/:symbol — no wallet required.
+                              · useTokenPrice(token.address) drives chart card.
+                              · Public /api/news + (if JWT) SSE /sse/news.
+                              · "Trade {symbol}" CTA:
+                                  – wallet present  → preselect tokens, push /trade
+                                  – wallet missing  → open ConnectWalletModal,
+                                                       then preselect + push /trade.
+
+Trade (tab)                 — wallet required.
+                              · If no wallet, shows a clean "Connect to trade" card.
+                              · TradePanel: network + execution mode (gasless | self)
+                                + sell token + amount + buy token. Any change clears
+                                the active quote.
+                              · POST /api/quote → setQuote.
+                              · QuoteTimer counts down; on expiry, auto-refresh
+                                request.
+
+Confirm                     — branches on quote.gasless:
+                              · Gasless     wallet.signTypedData(buildTypedData(q))
+                                            POST /api/order → push /order-status
+                                            connectOrderSocket(q.quoteId)
+                              · Self-exec   wallet.sendTransaction(q.tx)
+                                            setActiveOrder + push /order-status
+                                            (REST polling carries it from here)
+
+Order Status                — WS-first, REST polling fallback after 5s silence.
+                              Terminal: invalidate ['portfolio'], show CTA
+                              ("Trade Again" or "Get New Quote" on failure).
+
+Portfolio (tab)             — wallet required.
+                              · GET /api/portfolio (per chain).
+                              · markPrices seed priceStore for live P&L.
+
+Settings (tab)              — wallet card (connect / sign in / disconnect),
+                              chain picker, haptics toggle.
+
+================================================================================
+21. ERROR REFERENCE
+================================================================================
+
+Same as v2.2 — all errors follow { "error": "<string>" }.
+
+================================================================================
+22. SECURITY RULES (frontend MUST follow)
+================================================================================
+
+NEVER in frontend (no EXPO_PUBLIC_* leaks):
+  ✗ BEBOP_API_KEY  ✗ BEBOP_PARTNER_ID  ✗ BEBOP_FEE_RECIPIENT
+  ✗ JWT_SECRET     ✗ CRYPTOPANIC_API_KEY  ✗ BENZINGA_API_KEY
+
+ONLY in frontend:
+  ✓ EXPO_PUBLIC_API_URL
+  ✓ EXPO_PUBLIC_PRIVY_APP_ID / EXPO_PUBLIC_PRIVY_CLIENT_ID  (public by design)
+
+NEVER send to backend:
+  ✗ fee, fee_recipient, source, source-auth, origin_address (server injects).
+
+ALWAYS:
+  ✓ takerAddress = JWT wallet address.
+  ✓ Use getWsBaseUrl()/getApiBaseUrl(); never hardcode localhost.
+  ✓ Sign / broadcast before expiresAt.
+  ✓ Preserve token address casing from GET /api/tokens.
+  ✓ JWT lives in walletStore (in-memory). On native, replace with SecureStore.
+
+================================================================================
+23. RN FILE STRUCTURE (as implemented)
+================================================================================
+
+src/
+├── api/
+│   ├── backend.ts                 Axios + apiPaths
+│   ├── types.ts                   v2.3 type contracts
+│   ├── queryClient.ts             React Query client
+│   └── hooks/
+│       ├── index.ts
+│       ├── useAuth.ts             useNonce / useVerify
+│       ├── useTokens.ts
+│       ├── useMarkets.ts          composes UIToken + price
+│       ├── useRestPrices.ts       /api/prices polling fallback
+│       ├── useQuote.ts
+│       ├── useOrder.ts
+│       ├── useOrderStatus.ts      REST status polling
+│       ├── usePortfolio.ts
+│       └── useNews.ts
+├── auth/
+│   └── walletAuth.ts              nonce → personal_sign → verify → setJwt
+├── wallet/                        §26 — wallet abstraction
+│   ├── WalletProvider.tsx
+│   ├── ConnectWalletModal.tsx
+│   ├── types.ts
+│   ├── index.ts
+│   └── adapters/
+│       ├── injected.web.ts        window.ethereum (MetaMask/Rabby/Coinbase)
+│       ├── injected.ts            native fallback (unavailable)
+│       ├── manual.ts              dev-only paste address
+│       └── privy.ts               disabled until SDK + APP_ID provided
+├── platform/                      cross-platform shims
+│   ├── index.ts                   IS_WEB / IS_IOS / IS_ANDROID / pickPlatform
+│   ├── haptics.ts                 expo-haptics on native, no-op on web
+│   ├── sounds.ts                  expo-audio native, HTMLAudioElement web
+│   ├── BlurSurface.tsx            expo-blur native, View web
+│   └── shims/workletsPlatformChecker.js   Reanimated 4 web shim
+├── store/
+│   ├── walletStore.ts
+│   ├── tradeStore.ts
+│   ├── orderStore.ts
+│   ├── priceStore.ts              delta-merge w/ EPSILON
+│   ├── newsStore.ts
+│   ├── settingsStore.ts
+│   ├── favoritesStore.ts
+│   └── index.ts
+├── trade/
+│   └── signQuote.ts               EIP-712 typed-data builder (SingleOrder…)
+├── ws/
+│   ├── priceSocket.ts             ref-counted singleton, exp backoff
+│   ├── orderSocket.ts             auto-close on terminal status
+│   ├── newsStream.ts              fetch-event-source web, react-native-sse native
+│   └── url.ts
+├── utils/
+│   ├── apiUrl.ts                  LAN-IP-aware base URLs
+│   ├── amount.ts                  toBaseUnits / fromBaseUnits
+│   ├── parsePriceUpdate.ts        normalizes A/B/C/D
+│   ├── format.ts                  formatPrice, formatUSD, formatPct, formatVolume
+│   ├── quote.ts                   getSellToken / getBuyToken helpers
+│   ├── token.ts                   UIToken + toUIToken
+│   ├── price.ts                   lookupTokenPrice
+│   └── marketSearch.ts
+├── components/
+│   ├── common/                    GlassCard, Toast, Skeleton, DetailRow
+│   ├── markets/                   PairRow (memo, custom areEqual), FilterBar
+│   ├── trade/                     TradePanel, QuoteConfirm, QuoteTimer,
+│   │                              OrderStatus, TokenPicker
+│   └── mascot/                    Mascot (no animations on web), useMascotState
+├── hooks/                         useHaptics (platform-gated)
+├── constants/                     chains, explorers
+├── types/                         market, index
+└── theme/                         design tokens
+
+app/
+├── _layout.tsx                    QueryClient + WalletProvider + ToastProvider
+├── (tabs)/
+│   ├── _layout.tsx                Custom tab bar (BlurSurface)
+│   ├── index.tsx                  Markets + "Connect" pill
+│   ├── trade.tsx                  Connect gate + TradePanel
+│   ├── portfolio.tsx              Connect gate + history + summary
+│   └── settings.tsx               Wallet card + chain + haptics
+├── token/[symbol].tsx             Detail + chart placeholder + news
+├── confirm.tsx                    Renders QuoteConfirm
+├── order-status.tsx               Drives /ws/order/:quoteId + REST fallback
+└── +not-found.tsx
+
+================================================================================
+24. parsePriceUpdate.ts (reference)
+================================================================================
+
+See src/utils/parsePriceUpdate.ts — handles every emitter shape (A/B/C/D)
+and lowercases keys before merging into priceStore.
+
+================================================================================
+25. BACKEND ENV (reference — not in frontend)
+================================================================================
+
+BEBOP_API_KEY            REST source-auth; WS authorization
+BEBOP_PARTNER_ID=skewX   REST source; WS name (case-sensitive)
+BEBOP_WS_NAME            optional WS name override
+BEBOP_FEE_RECIPIENT      origin_address + fee_recipient for quotes
+BEBOP_FEE_BPS=0          partner fee basis points
+BEBOP_GASLESS=true       default quote mode
+BEBOP_BASE_URL=https://api.bebop.xyz
+
+Price feed status:
+  ✓ /api/prices and /ws/prices serve all 283 ethereum tokens via the
+    /v3/token-info seed (30s refresh).
+  ⏳ Bebop Price WS (real-time order books) still 403 until partner key
+    entitlement is enabled.
+
+================================================================================
+26. WALLET ABSTRACTION & UX GATING (this app)
+================================================================================
+
+Single source of truth: `src/wallet/WalletProvider.tsx`. Mounted under
+`QueryClientProvider` in `app/_layout.tsx`.
+
+Consumer hook:
+  const wallet = useWallet();
+  wallet.status                              'idle' | 'connecting' | 'connected' | 'error'
+  wallet.address                             string | null
+  wallet.source                              'metamask' | 'rabby' | 'privy-...' | 'manual'
+  wallet.isAuthenticating                    boolean
+  wallet.availableAdapters                   ('web-injected' | 'privy' | 'manual')[]
+  wallet.connect({ adapter?, manualAddress? })
+  wallet.authenticate()                      runs §5 against the active adapter
+  wallet.connectAndAuthenticate(opts)        idempotent compose
+  wallet.disconnect()                        clears address+jwt+trade+order stores
+  wallet.signTypedData(typedData)            EIP-712 for gasless confirm
+  wallet.sendTransaction(quote.tx)           self-execution path
+
+Adapter selection (first match wins):
+  1. Privy            available iff EXPO_PUBLIC_PRIVY_APP_ID set AND @privy-io/expo
+                      installed (today: disabled stub; supply APP_ID + add SDK
+                      → drop a bridge into `setPrivyBridge`).
+  2. Web injected     available iff IS_WEB && window.ethereum.
+  3. Manual           always available; dev-only — cannot sign.
+
+Cross-platform behavior:
+  Web  : MetaMask / Rabby / Coinbase via window.ethereum.
+         accountsChanged → clear JWT + active quote.
+         chainChanged    → clear active quote.
+  iOS / Android: Privy when configured; otherwise the modal still works for
+         browsing (you can paste an address with "Manual address" — read-only).
+
+UX gating:
+  · Markets and /token/:symbol are browseable without a wallet.
+    A persistent "Connect" pill lives in the Markets header.
+  · The Trade tab gates with a "Connect to trade" CTA when wallet absent.
+  · The "Trade {symbol}" button on Token Detail opens the connect modal,
+    then routes into Trade with that pair preselected (USDC ↔ token).
+  · Portfolio gates with "Connect to view your trades".
+
+Sign-in flow (§5):
+  ConnectWalletModal calls `wallet.connect({...})`, then immediately runs
+  `wallet.authenticate()` for any adapter that can sign. Result is a JWT in
+  walletStore, attached automatically by the axios interceptor.
+
+================================================================================
+END OF INTEGRATION GUIDE
+================================================================================
